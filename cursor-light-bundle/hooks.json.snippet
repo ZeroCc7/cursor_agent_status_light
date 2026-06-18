@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "./hooks/cursor-light/hook-turn-start.sh",
+        "matcher": "UserPromptSubmit"
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "./hooks/cursor-light/hook-plan-detect.sh",
+        "matcher": "AgentResponse"
+      }
+    ],
+    "afterFileEdit": [
+      { "command": "./hooks/cursor-light/hook-plan-file.sh" }
+    ],
+    "preToolUse": [
+      {
+        "command": "./hooks/cursor-light/hook-await-user.sh",
+        "matcher": "AskQuestion"
+      },
+      { "command": "./hooks/cursor-light/hook-busy.sh" }
+    ],
+    "postToolUse": [
+      {
+        "command": "./hooks/cursor-light/hook-plan-created.sh",
+        "matcher": "CreatePlan"
+      }
+    ],
+    "postToolUseFailure": [
+      { "command": "./hooks/cursor-light/hook-denied.sh" }
+    ],
+    "stop": [
+      {
+        "command": "./hooks/cursor-light/hook-stop.sh",
+        "matcher": "Stop"
+      }
+    ],
+    "sessionEnd": [{ "command": "./hooks/cursor-light/hook-idle.sh" }]
+  }
+}

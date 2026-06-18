@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+
+cursor-light-bundle/state.json
+cursor-light-bundle/state.lock
+cursor-light-bundle/*.log
+cursor-light-bundle/.codefree/
+
+codefree-o/state.json
+codefree-o/state.lock
+codefree-o/*.log

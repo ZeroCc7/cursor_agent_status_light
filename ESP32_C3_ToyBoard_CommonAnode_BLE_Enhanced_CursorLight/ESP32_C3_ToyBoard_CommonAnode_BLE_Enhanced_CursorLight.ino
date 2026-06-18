@@ -26,17 +26,17 @@ const char* BLE_DEVICE_NAME = "CursorLight";
 #define MODE_CHAR_UUID      "b8b7e002-7a6b-4f4f-9a8b-11c0ffee0001"
 
 // 你的实测：L1=绿灯，L2=黄灯，L3=红灯
-const int GREEN_PIN = 2;   // IO2 -> L1 绿灯
-const int YELLOW_PIN = 3;  // IO3 -> L2 黄灯
-const int RED_PIN = 4;     // IO4 -> L3 红灯
+const int GREEN_PIN = 7;   // IO2 -> L1 绿灯
+const int YELLOW_PIN = 6;  // IO3 -> L2 黄灯
+const int RED_PIN = 5;     // IO4 -> L3 红灯
 
 const int PWM_FREQ = 5000;
 const int PWM_RESOLUTION = 8;
 
 // 红灯偏弱，所以红灯单独增强
-const int RED_MAX = 255;
-const int YELLOW_MAX = 220;
-const int GREEN_MAX = 220;
+const int RED_MAX = 70;
+const int YELLOW_MAX = 60;
+const int GREEN_MAX = 60;
 
 const unsigned long NORMAL_MODE_TIMEOUT_MS = 5UL * 60UL * 1000UL;   // 5 分钟
 const unsigned long TRAFFIC_MODE_TIMEOUT_MS = 10UL * 60UL * 1000UL; // 10 分钟
@@ -139,7 +139,8 @@ bool isValidMode(String mode) {
     mode == "traffic" ||
     mode == "alarm" ||
     mode == "demo" ||
-    mode == "off"
+    mode == "off" ||
+    mode == "idle"
   );
 }
 
@@ -178,6 +179,8 @@ void setMode(String mode) {
     setOnly(0, 0, GREEN_MAX);
   } else if (mode == "off") {
     allOff();
+  } else if (mode == "idle") {
+    allOff();
   }
 
   notifyMode();
@@ -186,21 +189,12 @@ void setMode(String mode) {
 void autoTimeoutCheck() {
   unsigned long elapsed = millis() - modeStart;
 
-  if (currentMode == "off") {
-    return;
-  }
+  // off / idle 不自动切换
+  if (currentMode == "off" || currentMode == "idle") return;
 
-  if (currentMode == "traffic") {
-    if (elapsed >= TRAFFIC_MODE_TIMEOUT_MS) {
-      Serial.println("Traffic timeout -> off");
-      setMode("off");
-    }
-    return;
-  }
-
-  if (elapsed >= NORMAL_MODE_TIMEOUT_MS) {
-    Serial.println("Normal mode timeout -> traffic");
-    setMode("traffic");
+  // 所有模式 10 分钟后直接熄灭
+  if (elapsed >= TRAFFIC_MODE_TIMEOUT_MS) {
+    setMode("off");
   }
 }
 
@@ -211,7 +205,9 @@ void autoTimeoutCheck() {
 
 void updateBusy() {
   unsigned long t = millis() - modeStart;
-  int y = fadeInOutBrightness(t, 80, 500, 120, 500, YELLOW_MAX);
+  // 500ms亮 → 500ms灭，周期1秒，明显区别于 thinking 的慢呼吸
+  unsigned long phase = t % 1000;
+  int y = (phase < 500) ? YELLOW_MAX : 0;
   setOnly(0, y, 0);
 }
 
@@ -221,33 +217,11 @@ void updateError() {
   setOnly(r, 0, 0);
 }
 
-// thinking：连贯跑马灯，按实物从上到下：L1绿 -> L2黄 -> L3红
+// thinking：黄灯慢闪烁
 void updateThinking() {
   unsigned long t = millis() - modeStart;
-  const unsigned long period = 1050;
-  unsigned long x = t % period;
-
-  int g = 0;
-  int y = 0;
-  int r = 0;
-
-  if (x < 350) {
-    g = map(x, 0, 350, GREEN_MAX, 70);
-    y = map(x, 0, 350, 20, YELLOW_MAX);
-    r = 0;
-  } else if (x < 700) {
-    unsigned long p = x - 350;
-    g = map(p, 0, 350, 70, 0);
-    y = map(p, 0, 350, YELLOW_MAX, 70);
-    r = map(p, 0, 350, 20, RED_MAX);
-  } else {
-    unsigned long p = x - 700;
-    g = map(p, 0, 350, 20, GREEN_MAX);
-    y = map(p, 0, 350, 70, 0);
-    r = map(p, 0, 350, RED_MAX, 70);
-  }
-
-  setOnly(r, y, g);
+  int y = fadeInOutBrightness(t, 500, 800, 500, 1200, YELLOW_MAX);
+  setOnly(0, y, 0);
 }
 
 // ai：柔和版跑马灯，比 thinking 更慢、更柔和、亮度低一点
@@ -333,31 +307,31 @@ void updateTraffic() {
 
 // demo：默认开机演示模式
 void updateDemo() {
-  unsigned long t = (millis() - modeStart) % 16000;
+  unsigned long t = (millis() - modeStart) % 28000;
 
-  if (t < 1200) {
-    int g = triWave(t, 1200, GREEN_MAX);
+  if (t < 2000) {
+    int g = triWave(t, 2000, GREEN_MAX);
     setOnly(0, 0, g);
-  } else if (t < 2400) {
-    int y = triWave(t - 1200, 1200, YELLOW_MAX);
+  } else if (t < 4000) {
+    int y = triWave(t - 2000, 2000, YELLOW_MAX);
     setOnly(0, y, 0);
-  } else if (t < 3600) {
-    int r = triWave(t - 2400, 1200, RED_MAX);
+  } else if (t < 6000) {
+    int r = triWave(t - 4000, 2000, RED_MAX);
     setOnly(r, 0, 0);
-  } else if (t < 6200) {
+  } else if (t < 11000) {
     updateAi();
-  } else if (t < 8200) {
+  } else if (t < 16000) {
     updateThinking();
-  } else if (t < 10200) {
+  } else if (t < 21000) {
     updateBusy();
-  } else if (t < 12200) {
+  } else if (t < 24000) {
     updateError();
-  } else if (t < 14200) {
+  } else if (t < 27000) {
     updateAlarm();
   } else {
-    unsigned long p = t - 14200;
-    if (p < 600) setOnly(RED_MAX, 0, 0);
-    else if (p < 1200) setOnly(0, 0, GREEN_MAX);
+    unsigned long p = t - 27000;
+    if (p < 500) setOnly(RED_MAX, 0, 0);
+    else if (p < 1000) setOnly(0, 0, GREEN_MAX);
     else setOnly(0, YELLOW_MAX, 0);
   }
 }
@@ -449,7 +423,7 @@ void setup() {
 
   Serial.println("BLE advertising started.");
   Serial.println("Supported modes:");
-  Serial.println("demo / thinking / ai / busy / success / error / alarm / traffic / off / red / yellow / green");
+  Serial.println("demo / thinking / ai / busy / success / error / alarm / traffic / off / idle / red / yellow / green");
 }
 
 
@@ -477,6 +451,8 @@ void loop() {
   } else if (currentMode == "demo") {
     updateDemo();
   } else if (currentMode == "off") {
+    allOff();
+  } else if (currentMode == "idle") {
     allOff();
   }
 
