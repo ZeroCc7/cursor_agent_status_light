@@ -15,9 +15,8 @@
 // 注意：
 // 1. 原灯板 - / 原电池负极 第一版先不要接。
 // 2. 公共正极：GPIO LOW = 灯亮，GPIO HIGH = 灯灭。
-// 3. 默认开机模式：demo
-// 4. 除 off、traffic 外，其他模式最多运行 5 分钟，然后自动进入 traffic。
-// 5. traffic 最多运行 10 分钟，然后自动 off。
+// 3. 默认开机模式：green（绿灯常亮）
+// 4. 只有 green / success 模式 10 分钟后自动熄灭，其他模式不自动超时。
 // =====================================================
 
 const char* BLE_DEVICE_NAME = "CursorLight";
@@ -38,10 +37,9 @@ const int RED_MAX = 70;
 const int YELLOW_MAX = 60;
 const int GREEN_MAX = 60;
 
-const unsigned long NORMAL_MODE_TIMEOUT_MS = 5UL * 60UL * 1000UL;   // 5 分钟
-const unsigned long TRAFFIC_MODE_TIMEOUT_MS = 10UL * 60UL * 1000UL; // 10 分钟
+const unsigned long TRAFFIC_MODE_TIMEOUT_MS = 10UL * 60UL * 1000UL; // 10 分钟（绿灯自动熄灭）
 
-String currentMode = "demo";
+String currentMode = "green";
 unsigned long modeStart = 0;
 
 BLEServer* pServer = nullptr;
@@ -189,12 +187,12 @@ void setMode(String mode) {
 void autoTimeoutCheck() {
   unsigned long elapsed = millis() - modeStart;
 
-  // off / idle 不自动切换
-  if (currentMode == "off" || currentMode == "idle") return;
-
-  // 所有模式 10 分钟后直接熄灭
-  if (elapsed >= TRAFFIC_MODE_TIMEOUT_MS) {
-    setMode("off");
+  // 只有绿灯 / success 模式 10 分钟后自动熄灭
+  // 其他活跃模式（thinking、busy、error、alarm 等）不自动超时
+  if (currentMode == "green" || currentMode == "success") {
+    if (elapsed >= TRAFFIC_MODE_TIMEOUT_MS) {
+      setMode("off");
+    }
   }
 }
 
@@ -385,11 +383,10 @@ void setup() {
 
   allOff();
 
-  currentMode = "demo";
-  modeStart = millis();
+  setMode("green");
 
   Serial.println();
-  Serial.println("Power on. Default mode: demo");
+  Serial.println("Power on. Default mode: green");
   Serial.println("Common anode BLE enhanced version.");
   Serial.println("BLE device name: CursorLight");
 
