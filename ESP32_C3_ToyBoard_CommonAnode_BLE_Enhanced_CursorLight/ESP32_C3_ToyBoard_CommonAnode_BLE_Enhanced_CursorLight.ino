@@ -2,6 +2,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include "esp_mac.h"
 
 // =====================================================
 // ESP32-C3 SuperMini + 原玩具公共正极灯板：BLE 蓝牙控制增强版
@@ -19,7 +20,9 @@
 // 4. 只有 green / success 模式 10 分钟后自动熄灭，其他模式不自动超时。
 // =====================================================
 
-const char* BLE_DEVICE_NAME = "CursorLight";
+// 设备名前缀 + MAC 后缀，避免同局域网多台设备冲突
+// 实际名称在 setup() 中生成，格式：CursorLight-A3F2
+char bleDeviceName[24] = "CursorLight";
 
 #define SERVICE_UUID        "b8b7e001-7a6b-4f4f-9a8b-11c0ffee0001"
 #define MODE_CHAR_UUID      "b8b7e002-7a6b-4f4f-9a8b-11c0ffee0001"
@@ -385,12 +388,26 @@ void setup() {
 
   setMode("green");
 
+  // 生成唯一设备名：CursorLight-XXXX（MAC 后 4 位）
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_BT);
+  snprintf(bleDeviceName, sizeof(bleDeviceName), "CursorLight-%02X%02X", mac[4], mac[5]);
+
   Serial.println();
   Serial.println("Power on. Default mode: green");
   Serial.println("Common anode BLE enhanced version.");
-  Serial.println("BLE device name: CursorLight");
+  Serial.print("BLE device name: ");
+  Serial.println(bleDeviceName);
+  Serial.print("MAC address: ");
+  for (int i = 0; i < 6; i++) {
+    if (i > 0) Serial.print(":");
+    if (mac[i] < 0x10) Serial.print("0");
+    Serial.print(mac[i], HEX);
+  }
+  Serial.println();
+  Serial.println(">>> Please configure device_config.json on your computer with this name <<<");
 
-  BLEDevice::init(BLE_DEVICE_NAME);
+  BLEDevice::init(bleDeviceName);
 
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());

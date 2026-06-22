@@ -1,17 +1,18 @@
 import path from "path";
+import { fileURLToPath } from "url";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const BUNDLE_DIR = path.resolve(
-  "E:\\WorkSpace\\Zerocc\\study\\cursor_agent_status_light\\cursor-light-bundle"
-);
+const BUNDLE_DIR = path.join(__dirname, "cursor-light-bundle");
 const PYTHON = process.env.OPENCODE_LIGHT_PYTHON || "python";
 const GATE_SCRIPT = path.join(BUNDLE_DIR, "ble_gate_win.py");
 const BLE_SCRIPT = path.join(BUNDLE_DIR, "cursor_light_ble_enhanced.py");
 const LOG_FILE = path.join(BUNDLE_DIR, "opencode-light.log");
 const BUSY_DELAY_MS = 2000;
+const GREEN_HOLD_MS = 3000;
 
 function log(msg) {
   const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
@@ -29,18 +30,17 @@ async function gateSend(gateAction, mode) {
     });
     const result = stdout.trim();
     if (!result.startsWith("yes:")) {
-      log(`skip ${result} (want ${mode})`);
+      log(`gate skip ${result} (want ${mode})`);
       return;
     }
     const actualMode = result.slice(4);
-    log(`send mode=${actualMode}`);
+    log(`gate ok -> ble ${actualMode}`);
     await bleWrite(actualMode);
   } catch (e) {
     log(`gate error: ${e.message}`);
   }
 }
 
-// ---- BLE mutex: 同一时刻只允许一个 BLE 写入进程 ----
 let bleBusy = false;
 const bleQueue = [];
 
@@ -54,23 +54,16 @@ function bleWrite(mode) {
 async function drainBleQueue() {
   if (bleBusy) return;
   if (bleQueue.length === 0) return;
-
   bleBusy = true;
 
   while (bleQueue.length > 0) {
-    // 只取最后一个，丢弃中间排队的（只关心最新状态）
-    const item = bleQueue.pop();
-    const skipped = bleQueue.length;
-    bleQueue.length = 0;
-    if (skipped > 0) {
-      log(`ble queue: skipped ${skipped} stale write(s)`);
-    }
-
+    const item = bleQueue.shift();
     try {
       await execFileAsync(PYTHON, [BLE_SCRIPT, item.mode], {
-        timeout: 15000,
+        timeout: 30000,
         windowsHide: true,
       });
+      log(`ble sent ${item.mode}`);
     } catch (e) {
       log(`ble error: ${e.message}`);
     }
@@ -80,12 +73,10 @@ async function drainBleQueue() {
   bleBusy = false;
 }
 
-export function createAgentLightPlugin({
-  gateSendFn = gateSend,
-  logFn = log,
-} = {}) {
-  let currentPhase = "";
+export function createAgentLightPlugin() {
+  let phase = "idle";
   let busyTimer = null;
+  let greenUntil = 0;
 
   function clearBusyTimer() {
     if (busyTimer) {
@@ -94,142 +85,141 @@ export function createAgentLightPlugin({
     }
   }
 
-  async function markThinking(action = "thinking") {
+  async function toThinking(gateAction = "thinking") {
     clearBusyTimer();
-    if (currentPhase === "thinking") return;
-    currentPhase = "thinking";
-    await gateSendFn(action, "thinking");
+    if (phase === "thinking") return;
+    if (Date.now() < greenUntil) {
+      log(`thinking suppressed (green hold ${Math.round((greenUntil - Date.now()) / 1000)}s)`);
+      return;
+    }
+    phase = "thinking";
+    await gateSend(gateAction, "thinking");
   }
 
-  async function markBusy() {
-    if (currentPhase === "busy") return;
+  async function toBusy() {
+    if (phase === "busy") return;
     clearBusyTimer();
-    // 延迟 2 秒再切 busy：短于 2 秒的工具调用不切灯，避免快速抖动
     busyTimer = setTimeout(async () => {
       busyTimer = null;
-      currentPhase = "busy";
-      await gateSendFn("busy", "busy");
+      phase = "busy";
+      await gateSend("busy", "busy");
     }, BUSY_DELAY_MS);
   }
 
-  async function markIdle() {
+  async function toGreen() {
     clearBusyTimer();
-    currentPhase = "";
-    logFn("session idle -> green");
-    await gateSendFn("stop-success", "green");
+    phase = "idle";
+    greenUntil = Date.now() + GREEN_HOLD_MS;
+    log("-> green");
+    await gateSend("stop-success", "green");
   }
 
-  async function markError() {
+  async function toError() {
     clearBusyTimer();
-    currentPhase = "";
-    await gateSendFn("stop-error", "error");
+    phase = "idle";
+    greenUntil = 0;
+    await gateSend("stop-error", "error");
+  }
+
+  async function toAlarm() {
+    clearBusyTimer();
+    phase = "idle";
+    greenUntil = 0;
+    await gateSend("await-user", "alarm");
   }
 
   return async ({ project, client, $, directory, worktree }) => {
-    logFn("AgentLightPlugin v7.3 ready");
+    log("AgentLightPlugin v8.0 ready");
 
-  return {
-    event: async ({ event }) => {
-      const type = event.type;
-      const props = event.properties || {};
+    return {
+      event: async ({ event }) => {
+        const type = event.type;
+        const props = event.properties || {};
 
-      if (type === "chat.request.received") {
-        await markThinking("turn-start");
-        return;
-      }
-
-      if (type === "message.updated") {
-        const role = props.info?.role;
-        if (role === "user") {
-          await markThinking("turn-start");
-        } else if (role === "assistant") {
-          await markThinking();
+        if (type === "chat.request.received") {
+          greenUntil = 0;
+          await toThinking("turn-start");
+          return;
         }
-        return;
-      }
 
-      if (type === "message.part.updated") {
-        const partType = props.part?.type;
-        if (partType === "tool") {
-          const toolName = props.part?.tool || "unknown";
-          logFn(`tool part: ${toolName}`);
-          await markBusy();
+        if (type === "chat.request.preprocess.done") {
+          await toThinking();
+          return;
+        }
+
+        if (type === "message.updated") {
+          const role = props.info?.role;
+          if (role === "user") {
+            await toThinking("turn-start");
+          } else if (role === "assistant") {
+            await toThinking();
+          }
+          return;
+        }
+
+        if (type === "message.part.updated") {
+          const partType = props.part?.type;
+          if (partType === "tool") {
+            log(`tool part: ${props.part?.tool || "unknown"}`);
+            await toBusy();
+          } else {
+            await toThinking();
+          }
+          return;
+        }
+
+        if (type === "message.part.delta") {
+          await toThinking();
+          return;
+        }
+
+        if (type === "session.status") {
+          const statusType = props.status?.type;
+          if (statusType === "idle" || statusType === "cancelled" || statusType === "aborted" || statusType === "stopped") {
+            log(`session.status: ${statusType} -> green`);
+            await toGreen();
+          } else if (statusType === "error") {
+            log("session.status: error");
+            await toError();
+          } else if (statusType === "busy") {
+            await toBusy();
+          } else {
+            log(`session.status: ${statusType} (unhandled)`);
+          }
+          return;
+        }
+
+        if (type === "session.idle") {
+          await toGreen();
+          return;
+        }
+
+        if (type === "session.error") {
+          log("session.error -> error");
+          await toError();
+          return;
+        }
+
+        if (type === "permission.asked") {
+          await toAlarm();
+          return;
+        }
+      },
+
+      "tool.execute.before": async () => {
+        await toBusy();
+      },
+
+      "tool.execute.after": async (input, output) => {
+        clearBusyTimer();
+        if (output?.error != null) {
+          await toError();
         } else {
-          await markThinking();
+          phase = "thinking";
         }
-        return;
-      }
-
-      if (
-        type === "message.part.delta" ||
-        type === "session.next.text.started" ||
-        type === "session.next.text.delta" ||
-        type === "session.next.text.ended" ||
-        type === "session.next.reasoning.started" ||
-        type === "session.next.reasoning.delta" ||
-        type === "session.next.reasoning.ended"
-      ) {
-        await markThinking();
-        return;
-      }
-
-      if (type === "session.next.tool.called" || type === "session.next.tool.progress") {
-        await markBusy();
-        return;
-      }
-
-      // 单个工具完成：不闪绿灯，取消待定的 busy 定时器
-      if (type === "session.next.tool.success") {
-        clearBusyTimer();
-        currentPhase = "thinking";
-        return;
-      }
-
-      if (type === "session.next.tool.failed") {
-        await markError();
-        return;
-      }
-
-      if (type === "session.status") {
-        const statusType = props.status?.type;
-        if (statusType === "idle") {
-          await markIdle();
-        } else if (statusType === "error") {
-          logFn("session.status: error");
-          await markError();
-        }
-        return;
-      }
-
-      if (type === "session.idle") {
-        await markIdle();
-        return;
-      }
-
-      if (type === "permission.asked") {
-        clearBusyTimer();
-        currentPhase = "";
-        await gateSendFn("await-user", "alarm");
-        return;
-      }
-    },
-
-    "tool.execute.before": async (input) => {
-      await markBusy();
-    },
-
-    "tool.execute.after": async (input, output) => {
-      clearBusyTimer();
-      const hasError = output?.error != null;
-      if (hasError) {
-        await markError();
-      } else {
-        // 工具完成，代理可能继续 → thinking，不发 success
-        currentPhase = "thinking";
-      }
-    },
+      },
+    };
   };
-};
 }
 
 export const AgentLightPlugin = createAgentLightPlugin();

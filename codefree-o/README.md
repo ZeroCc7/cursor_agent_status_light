@@ -1,257 +1,181 @@
-# CodeFree-O Agent Light 集成指南
+# CodeFree-O Agent Light Plugin
 
-本项目将 CodeFree-O 的 AI 状态映射到 ESP32-C3 BLE 红绿灯设备，实现实时状态可视化。
+## 简介
 
-## 功能特性
-
-- **实时状态同步**：根据 CodeFree-O 的不同操作状态自动切换 LED 灯效
-- **低延迟响应**：通过 BLE（蓝牙低功耗）实现毫秒级状态切换
-- **智能防抖**：避免短时间内重复发送指令，减少蓝牙连接次数
-- **空闲检测**：3 秒无操作自动切换到绿色常亮（空闲状态）
-- **成功反馈**：工具执行成功后会短暂显示绿色（500ms）再转回黄色
-- **错误提示**：执行失败时显示红色快闪
-
-## 系统架构
+CodeFree-O 全局插件（v8.0），将 AI 编程助手的实时状态映射到 ESP32-C3 BLE 状态灯，一眼看到 AI 在干什么。
 
 ```
-CodeFree-O 插件 (opencode-agent-light.js)
-    ↓
-Python 防抖脚本 (ble_gate_win.py)
-    ↓
-BLE 发送脚本 (cursor_light_ble_enhanced.py)
-    ↓
-ESP32-C3 设备 (CursorLight)
+opencode-agent-light.js (插件, 状态机 + BLE 队列)
+        ↓
+ble_gate_win.py (防抖网关, state.json 文件锁)
+        ↓
+cursor_light_ble_enhanced.py (BLE 写入, bleak 库)
+        ↓
+ESP32-C3 BLE 状态灯 (CursorLight-XXXX)
 ```
 
-## 安装部署
+## 灯效状态
 
-### 1. 硬件准备
+| 灯效 | 含义 | ESP32 模式 |
+|------|------|-----------|
+| 黄灯呼吸 | AI 思考 / 生成中 | `thinking` |
+| 黄灯快闪（500ms） | 工具执行中 | `busy` |
+| 绿灯常亮 | 空闲 / 任务完成 | `green` |
+| 红灯快闪 | 出错 | `error` |
+| 红黄交替 | 等待用户授权 | `alarm` |
 
-- ESP32-C3 开发板（或支持 BLE 的其他开发板）
-- LED 红绿灯（共阳极或共阴极）
-- 按照硬件接线图连接 ESP32-C3 和 LED
+## 事件映射
 
-### 2. 固件烧录
+| 事件 | 灯状态 | 说明 |
+|------|--------|------|
+| `chat.request.received` | thinking | 用户发送消息，清除 green hold |
+| `chat.request.preprocess.done` | thinking | 请求预处理完成 |
+| `message.updated` (role=user) | thinking | 用户消息更新 |
+| `message.updated` (role=assistant) | thinking | AI 回复中 |
+| `message.part.updated` (part=tool) | busy | 工具开始执行 |
+| `message.part.updated` (其他) | thinking | AI 输出文本 |
+| `message.part.delta` | thinking | 流式输出 |
+| `session.status` (idle/cancelled/aborted/stopped) | green | 空闲 |
+| `session.status` (error) | error | 会话错误 |
+| `session.status` (busy) | busy | 会话繁忙 |
+| `session.idle` | green | 空闲（主要收口事件） |
+| `session.error` | error | 会话异常（手动停止也会触发） |
+| `permission.asked` | alarm | 等待用户授权 |
+| `tool.execute.before` | busy | 工具执行前 |
+| `tool.execute.after` (无错) | thinking | 工具成功，继续等待 |
+| `tool.execute.after` (有错) | error | 工具失败 |
 
-1. 打开 Arduino IDE
-2. 安装 ESP32 开发板支持包
-3. 打开 `ESP32_C3_ToyBoard_CommonAnode_BLE_Enhanced_CursorLight.ino` 文件
-4. 选择开发板：ESP32C3 Dev Module
-5. 配置 WiFi 信息（可选，用于 OTA 升级）
-6. 点击上传按钮烧录固件
+未处理的事件（与灯无关，自动忽略）：`message.removed`、`session.updated`、`session.diff`、`session.compacted`、`file.watcher.updated`、`file.edited`、`codefree.metric.*`
 
-### 3. 软件依赖
+## 状态机
 
-安装 Python 和必需的库：
+```
+用户发消息 → thinking(黄灯呼吸)
+                ↓
+         工具执行 → busy(黄灯快闪, 2s 防抖)
+                ↓
+         工具成功 → thinking(继续等)
+                ↓
+         session.idle → green(绿灯, 保持 3s)
+
+异常：
+  工具失败 → error(红灯快闪)
+  手动停止 → error → session.idle → green
+  需要授权 → alarm(红黄交替)
+```
+
+防抖机制（两层）：
+
+- 插件层：busy 延迟 2s 触发，避免短命令频繁闪灯；green 完成后保持 3s，期间新的 thinking 被压制
+- 网关层：`ble_gate_win.py` 对每种模式设独立防抖窗口（thinking 5s / busy 8s / alarm 500ms / success 3s / error 3s / green 3s），用 `state.json` + 文件锁保证原子性
+
+## 安装
+
+### 1. 安装 Python 依赖
 
 ```bash
 pip install bleak
 ```
 
-### 4. 插件安装
+### 2. 部署插件文件
 
-复制插件文件到 CodeFree-O 插件目录：
+将以下文件复制到 CodeFree-O 插件目录：
 
-**Windows:**
 ```bash
 copy opencode-agent-light.js C:\Users\<用户名>\.codefree-o\plugins\
 ```
 
-修改插件文件中的插件目录路径：
-```javascript
-const BUNDLE_DIR = path.resolve(
-  "<你的项目路径>\\codefree-o"
-);
+插件通过 `BUNDLE_DIR`（第 9 行）定位 Python 脚本目录，默认指向 `__dirname/cursor-light-bundle`。如果脚本放在其他位置，修改这一行。
+
+### 3. 烧录 ESP32 固件
+
+用 Arduino IDE 打开 `ESP32_C3_ToyBoard_CommonAnode_BLE_Enhanced_CursorLight.ino`，选择 `ESP32C3 Dev Module`，上传固件。
+
+### 4. 记下设备名
+
+烧录完成后，打开串口监视器（115200），找到这行：
+
+```text
+BLE device name: CursorLight-XXXX
 ```
 
-或者设置环境变量：
-```bash
-set OPENCODE_LIGHT_BUNDLE_DIR=<你的项目路径>\\codefree-o
+记下完整名称（如 `CursorLight-068E`）。
+
+### 5. 配置目标设备（多设备必选）
+
+在 Python 脚本所在目录创建 `device_config.json`：
+
+```json
+{
+  "target_device_name": "CursorLight-068E"
+}
 ```
 
-### 5. 设备连接
+把 `CursorLight-068E` 换成你自己设备的名字。单台设备使用时可以跳过这步，脚本会用默认名 `CursorLight` 扫描。
 
-1. 为 ESP32-C3 供电
-2. 打开手机蓝牙，搜索设备名为 "CursorLight"
-3. 连接成功后 LED 会显示绿色常亮
+### 6. 重启 CodeFree-O
 
-### 6. 软件配置
+插件自动加载，日志写入 `opencode-light.log`。
 
-编辑 `ble_gate_win.py`，确认 BLE 设备名称：
-```python
- DEVICE_NAME = "CursorLight"
-```
+## 手动测试
 
-编辑 `cursor_light_ble_enhanced.py`，确认服务 UUID：
-```python
- SERVICE_UUID = "b8b7e001-7a6b-4f4f-9a8b-11c0ffee0001"
- MODE_CHAR_UUID = "b8b7e002-7a6b-4f4f-9a8b-11c0ffee0001"
-```
-
-## 使用方式
-
-### 自动模式（推荐）
-
-CodeFree-O 启动时会自动加载插件，插件会监听以下事件并自动切换 LED 状态：
-
-| 状态 | 触发条件 | 灯效 |
-|------|---------|------|
-| thinking | 用户发送消息 / AI 正在生成回复 | 黄灯慢闪烁 |
-| busy | AI 正在执行工具（如运行代码） | 黄灯较快闪烁 |
-| success | 工具执行成功完成 | 绿灯常亮（500ms） |
-| green | 空闲状态（3秒无操作） | 绿灯常亮 |
-| error | 执行失败 | 红灯快闪 |
-| alarm | 等待用户授权 | 红黄交替闪烁 |
-
-### 手动模式
-
-可以直接通过命令行控制 LED 状态：
+通过网关脚本测试各模式：
 
 ```bash
-# 切换到 thinking 模式
 python ble_gate_win.py turn-start thinking
-
-# 切换到 busy 模式
 python ble_gate_win.py busy busy
-
-# 切换到 green 模式
 python ble_gate_win.py idle green
-
-# 切换到 error 模式
 python ble_gate_win.py stop-error error
-
-# 切换到 demo 演示模式
-python ble_gate_win.py demo demo
+python ble_gate_win.py await-user alarm
 ```
 
-### 查看 BLE 日志
-
-BLE 脚本会输出详细日志到控制台：
+也可以直接调用 BLE 脚本（跳过防抖）：
 
 ```bash
+python cursor_light_ble_enhanced.py thinking
+python cursor_light_ble_enhanced.py busy
 python cursor_light_ble_enhanced.py green
+python cursor_light_ble_enhanced.py error
+python cursor_light_ble_enhanced.py alarm
+python cursor_light_ble_enhanced.py off
 ```
 
-日志会显示设备连接状态、写入结果等。
+## 多设备配置
 
-## 工作原理
+同一办公室有多台 CursorLight 时，每台电脑各自配置 `device_config.json`，指向自己的 ESP32。
 
-### 插件事件监听
+每台 ESP32 因为 MAC 地址不同，烧同一份固件会自动生成不同的设备名。各自电脑填自己的名字就不会串。
 
-插件通过 CodeFree-O 的插件系统监听以下事件：
+详细步骤见上面第 4、5 步。
 
-1. **chat.request.received**: 用户发送新消息
-2. **message.updated**: 消息更新（AI 回复）
-3. **message.part.updated**: 消息部分更新（工具执行）
-4. **tool.execute.before**: 工具执行前
-5. **tool.execute.after**: 工具执行后
-6. **session.idle**: 会话空闲
-7. **session.status**: 会话状态变化
-8. **permission.asked**: 需要用户授权
+## 文件清单
 
-### 防抖机制
+| 文件 | 说明 |
+|------|------|
+| `opencode-agent-light.js` | v8.0 插件入口，状态机 + BLE 队列 |
+| `ble_gate_win.py` | 防抖网关，Windows 版（msvcrt 文件锁） |
+| `cursor_light_ble_enhanced.py` | BLE 写入脚本（bleak），支持 device_config.json |
+| `device_config.json` | 本机目标 ESP32 设备名配置 |
+| `opencode-light.log` | 运行日志（自动生成） |
+| `state.json` | 网关防抖状态（自动生成） |
 
-`ble_gate_win.py` 实现了防抖逻辑，避免短时间内重复发送相同指令：
+## 日志查看
 
-- 使用文件锁确保同一时间只有一个进程运行
-- 记录上一次的指令和发送时间
-- 如果短时间内收到相同指令，则跳过发送
+```bash
+# 实时查看
+type opencode-light.log
 
-### 状态转换规则
-
-```
-初始状态 → green (空闲)
-
-用户发消息 → thinking
-  ├─ 工具执行前 → busy
-  ├─ 工具执行成功 → success (500ms) → thinking
-  ├─ 工具执行失败 → error
-  ├─ 等待授权 → alarm
-  └─ 3秒无活动 → green (空闲)
-
-空闲状态 → 用户发消息 → thinking
+# PowerShell
+Get-Content opencode-light.log -Wait
 ```
 
 ## 故障排查
 
-### LED 不亮
-
-1. 检查 ESP32-C3 是否正常供电
-2. 检查 LED 接线是否正确
-3. 查看 LED 序列监视器是否有错误信息
-4. 确认 BLE 设备是否正常连接
-
-### BLE 连接失败
-
-1. 确认 ESP32-C3 的蓝牙是否开启
-2. 检查设备名称是否为 "CursorLight"
-3. 重启 ESP32-C3 设备
-4. 检查手机蓝牙是否开启
-
-### Python 脚本报错
-
-1. 确认已安装 `bleak` 库：`pip install bleak`
-2. 检查 Python 版本（建议 3.7+）
-3. 查看日志文件 `opencode-light.log`
-
-### 插件不工作
-
-1. 确认插件文件在正确的目录
-2. 检查 `opencode-light.log` 日志文件
-3. 重启 CodeFree-O
-4. 确认 `BUNDLE_DIR` 路径配置正确
-
-## 进阶配置
-
-### 调整 LED 亮度
-
-编辑 ESP32 固件中的亮度参数：
-
-```cpp
-// LED 最大亮度 (0-255)
-#define RED_MAX 70
-#define YELLOW_MAX 60
-#define GREEN_MAX 60
-```
-
-### 调整灯光节奏
-
-编辑 `fadeInOut()` 函数中的时间参数：
-
-```cpp
-void fadeInOut(int r, int g, int b, int fadeDuration, int holdDuration, int fadeOutDuration, int offDuration) {
-  // fadeDuration: 渐亮时间 (ms)
-  // holdDuration: 保持时间 (ms)
-  // fadeOutDuration: 渐暗时间 (ms)
-  // offDuration: 熄灭时间 (ms)
-}
-```
-
-### 更改空闲检测时间
-
-编辑插件中的空闲检测时间：
-
-```javascript
-// 3 秒无操作认为空闲
-idleTimer = setTimeout(async () => {
-  // ...
-}, 3000);
-```
-
-## 文件说明
-
-| 文件 | 说明 |
+| 现象 | 检查 |
 |------|------|
-| `opencode-agent-light.js` | CodeFree-O 插件，监听事件并控制 LED |
-| `ble_gate_win.py` | Windows 版防抖脚本，避免重复发送指令 |
-| `cursor_light_ble_enhanced.py` | BLE 通信脚本，发送控制指令到 ESP32 |
-| `ESP32_C3_ToyBoard_CommonAnode_BLE_Enhanced_CursorLight.ino` | ESP32 固件代码 |
-| `README.md` | 本文件，使用说明文档 |
-
-## 许可证
-
-本项目基于 MIT 许可证开源。
-
-## 支持
-
-如有问题，请提交 Issue 或联系开发者。
+| 灯不亮 | ESP32 供电、接线、串口监视器是否有输出 |
+| 找不到设备 | 串口输出的设备名和 `device_config.json` 是否一致 |
+| 同事的灯被我的控制了 | 各自 `device_config.json` 是否填了自己设备的名字 |
+| 插件不工作 | 查看 `opencode-light.log`，确认 BUNDLE_DIR 路径正确 |
+| BLE 写入偶发失败 | 正常现象，下次写入通常自动恢复 |
+| 手动停止先红后绿 | 正常：`session.error` → 红灯，随后 `session.idle` → 绿灯 |

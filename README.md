@@ -1,10 +1,6 @@
 # CursorLight
 
-[English](#cursorlight-english)
-
 一个基于 **ESP32-C3 SuperMini + BLE 蓝牙** 的桌面状态灯项目，用红绿灯挂件直观显示 Cursor Agent / AI 编程过程中的状态，例如思考中、执行中、成功、失败、等待用户操作等。
-
-> A BLE-powered status light for Cursor Agent, using ESP32-C3 to visualize AI coding states.
 
 ---
 
@@ -113,16 +109,16 @@ ESP32_C3_ToyBoard_CommonAnode_BLE_Enhanced_CursorLight.ino
 
 固件特性：
 
-- BLE 广播名：`CursorLight`
+- BLE 广播名：`CursorLight-XXXX`（XXXX 为设备 MAC 地址后 4 位，每台 ESP32 自动生成唯一名称）
 - 通信方式：BLE GATT 写入字符串
-- 默认开机模式：`demo`
+- 默认开机模式：`green`
 - 支持多种状态灯效
-- 内置自动超时，避免灯长时间高亮
+- 绿灯 / success 模式 10 分钟后自动熄灭，其他模式不自动超时
 
 BLE 参数：
 
 ```text
-Device Name: CursorLight
+Device Name: CursorLight-XXXX（自动从 MAC 生成，如 CursorLight-A3F2）
 Service UUID: b8b7e001-7a6b-4f4f-9a8b-11c0ffee0001
 Mode Characteristic UUID: b8b7e002-7a6b-4f4f-9a8b-11c0ffee0001
 ```
@@ -227,13 +223,17 @@ Hard resetting via RTS pin...
 按一下开发板 `RST`，正常会看到类似日志：
 
 ```text
-Power on. Default mode: demo
+Power on. Default mode: green
 Common anode BLE enhanced version.
-BLE device name: CursorLight
+BLE device name: CursorLight-A3F2
+MAC address: 34:85:18:XX:A3:F2
+>>> Please configure device_config.json on your computer with this name <<<
 BLE advertising started.
 Supported modes:
-demo / thinking / ai / busy / success / error / alarm / traffic / off / red / yellow / green
+demo / thinking / ai / busy / success / error / alarm / traffic / off / idle / red / yellow / green
 ```
+
+记下 `BLE device name` 行的完整名称（如 `CursorLight-A3F2`），后面配置电脑端脚本时需要用到。
 
 ---
 
@@ -301,6 +301,26 @@ py -3 cursor_light_ble_enhanced.py off
 
 ---
 
+### 7.3 多设备配置
+
+如果同一空间内有多台 CursorLight（例如两位同事各一台），需要为每台电脑指定要控制的 ESP32 设备，避免互相串扰。
+
+1. 烧录固件后，打开串口监视器记下你的 ESP32 设备名，如 `CursorLight-A3F2`。
+
+2. 在脚本所在目录（`cursor-light-bundle/` 或 `.cursor/hooks/cursor-light/`）创建 `device_config.json`：
+
+```json
+{
+  "target_device_name": "CursorLight-A3F2"
+}
+```
+
+3. 把 `CursorLight-A3F2` 换成你自己设备串口输出的名字。
+
+如果没有 `device_config.json`，脚本会用默认名 `CursorLight` 扫描，可能连到附近其他同名设备。单台设备使用时无需配置。
+
+---
+
 ## 8. 固件模式
 
 | mode | 灯效说明 | 典型用途 |
@@ -326,9 +346,9 @@ py -3 cursor_light_ble_enhanced.py off
 
 | 当前模式 | 自动行为 |
 |---|---|
-| `demo` / `thinking` / `ai` / `busy` / `success` / `error` / `alarm` / `red` / `yellow` / `green` | 最多运行 5 分钟，然后自动进入 `traffic` |
-| `traffic` | 最多运行 10 分钟，然后自动 `off` |
-| `off` | 不自动切换 |
+| `green` / `success` | 10 分钟后自动 `off` |
+| 其他模式 | 不自动超时 |
+| `off` / `idle` | 不自动切换 |
 
 ---
 
@@ -539,15 +559,24 @@ USB CDC On Boot = Enabled
 
 然后重新上传固件，并打开 115200 波特率串口监视器。
 
-### 找不到 BLE 设备 CursorLight
+### 找不到 BLE 设备
 
 检查：
 
 - ESP32-C3 是否已通电。
 - 固件是否已成功运行。
-- BLE 名称是否为 `CursorLight`。
+- 串口监视器输出的 `BLE device name` 是什么（如 `CursorLight-A3F2`）。
+- 如果配了 `device_config.json`，确认 `target_device_name` 和串口输出的名字一致。
 - 电脑蓝牙是否打开。
 - macOS 是否给 Terminal / Cursor 蓝牙权限。
+
+### 同事的指令控制了我的灯
+
+多台 CursorLight 在同一空间时需要各自配置：
+
+1. 每台 ESP32 串口输出的设备名不同（MAC 后缀不同）。
+2. 每台电脑的脚本目录放一份 `device_config.json`，填入自己设备的名字。
+3. 详细步骤见 7.3 节。
 
 ### macOS 提示 Bluetooth device is turned off
 
@@ -600,608 +629,3 @@ notepad "$env:USERPROFILE\.cursor\hooks.json"
 - Arduino IDE 下载页：`https://www.arduino.cc/en/software`
 - Arduino IDE 安装说明：`https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE`
 - Arduino-ESP32 安装文档：`https://docs.espressif.com/projects/arduino-esp32/en/latest/installing.html`
-
----
-
-# CursorLight (English)
-
-[中文](#cursorlight)
-
-A desktop status light project based on **ESP32-C3 SuperMini + BLE Bluetooth**. It turns a toy traffic-light ornament into a visual indicator for Cursor Agent / AI coding states—thinking, executing, success, failure, waiting for user input, and more.
-
-> A BLE-powered status light for Cursor Agent, using ESP32-C3 to visualize AI coding states.
-
----
-
-## 1. Project Overview
-
-CursorLight repurposes an ordinary traffic-light desk ornament into a computer-controlled status lamp.
-
-Core ideas:
-
-- Use **ESP32-C3 SuperMini** as the main controller.
-- Reuse the original three-color lamp board inside the ornament.
-- Receive status commands from a host script over **BLE Bluetooth**.
-- Integrate with Cursor Hooks so Cursor Agent activity maps automatically to light patterns.
-
-This project does not use Wi-Fi. Your computer can stay on 5 GHz Wi-Fi; the ESP32-C3 only handles BLE and lighting.
-
----
-
-## 2. Preview
-
-Typical state mapping:
-
-| Scenario | Mode | Effect |
-|---|---|---|
-| Power-on demo | `demo` | Cycles through multiple effects |
-| AI analyzing | `thinking` | Smooth chasing lights |
-| AI generating | `ai` | Soft, slow chasing lights |
-| Running commands | `busy` | Yellow slow blink |
-| Task succeeded | `success` | Green solid |
-| Task failed | `error` | Red fast blink |
-| Critical / blocked | `alarm` | Alternating red/yellow warning |
-| Display mode | `traffic` | Simulated traffic light |
-| Off | `off` | All off |
-
----
-
-## 3. Hardware Bill of Materials
-
-| Category | Item | Qty | Notes |
-|---|---|---:|---|
-| Body | Traffic-light ornament / toy signal model | 1 | Search Taobao / 1688 for “traffic light ornament” or “signal light ornament” |
-| MCU | ESP32-C3 SuperMini dev board | 1 | Pre-soldered headers and USB-C recommended |
-| Current limit | 220Ω resistors | 3 | Buy ~10 for spares |
-| Wire | Thin wire / jumper wire | some | 30 AWG silicone or magnet wire recommended |
-| Power | USB-C data cable | 1 | Must support data, not charge-only |
-| Insulation | Heat shrink / electrical tape | small | Protect solder joints |
-| Tools | Soldering iron, solder, tweezers, wire cutters | — | Basic soldering kit |
-| Test | Multimeter | optional | Check joints and shorts |
-
-Notes:
-
-- Reuses the toy lamp board; no separate red/yellow/green LEDs needed.
-- After mod, power via USB; coin cells are not recommended.
-- Use 220Ω in series per channel to protect the ESP32-C3 and original board.
-
----
-
-## 4. Wiring
-
-This build targets a **common-anode** lamp board.
-
-Measured lamp positions:
-
-| Position | Color | ESP32 pin |
-|---|---|---|
-| L1 | Green | IO2 |
-| L2 | Yellow | IO3 |
-| L3 | Red | IO4 |
-
-Wiring:
-
-```text
-ESP32 3.3V  -> board + / original battery +
-ESP32 IO2   -> 220Ω -> L1 control = green
-ESP32 IO3   -> 220Ω -> L2 control = yellow
-ESP32 IO4   -> 220Ω -> L3 control = red
-
-board - / original battery -: leave disconnected in v1
-```
-
-Common-anode logic:
-
-```text
-GPIO LOW  = lamp on
-GPIO HIGH = lamp off
-```
-
-Firmware inverts output as needed; you normally do not need to manage levels manually.
-
-Cautions:
-
-- Solder only to exposed pads, component leads, or resistor joints.
-- Do not solder on the green solder mask surface.
-- After soldering, check for shorts with a multimeter before USB power.
-- For finished units, secure flying wires with hot glue or UV resin to avoid broken joints.
-
----
-
-## 5. Firmware
-
-Firmware file:
-
-```text
-ESP32_C3_ToyBoard_CommonAnode_BLE_Enhanced_CursorLight.ino
-```
-
-Features:
-
-- BLE advertised name: `CursorLight`
-- Control: BLE GATT write (string mode name)
-- Default on boot: `demo`
-- Multiple status effects
-- Built-in auto timeout to avoid leaving lamps on too long
-
-BLE parameters:
-
-```text
-Device Name: CursorLight
-Service UUID: b8b7e001-7a6b-4f4f-9a8b-11c0ffee0001
-Mode Characteristic UUID: b8b7e002-7a6b-4f4f-9a8b-11c0ffee0001
-```
-
----
-
-## 6. Flashing Firmware
-
-### 6.1 Install Arduino IDE
-
-Download Arduino IDE 2.x:
-
-```text
-https://www.arduino.cc/en/software
-```
-
-macOS:
-
-1. Download the macOS build.
-2. Open the `.dmg`.
-3. Drag Arduino IDE into Applications.
-4. Allow on first launch if macOS prompts.
-
-Windows:
-
-1. Download the Windows installer.
-2. Complete the wizard.
-3. Allow drivers or network access if prompted.
-
----
-
-### 6.2 Install ESP32 board package
-
-In Arduino IDE:
-
-1. Open **Boards Manager** (left sidebar).
-2. Search `esp32`.
-3. Install **esp32 by Espressif Systems**.
-4. Restart Arduino IDE when done.
-
-Do not use **Arduino ESP32 Boards by Arduino** as the primary package for this project.
-
----
-
-### 6.3 Select board and port
-
-With ESP32-C3 SuperMini connected:
-
-```text
-Board: ESP32C3 Dev Module
-Port: USB serial port
-```
-
-Typical ports:
-
-| OS | Example |
-|---|---|
-| macOS | `/dev/cu.usbmodemxxxx Serial Port (USB)` |
-| Windows | `COM3` / `COM5` etc. |
-
-Recommended settings:
-
-| Setting | Value |
-|---|---|
-| USB CDC On Boot | Enabled |
-| Upload Speed | 921600 or default |
-| Flash Size | 4MB or default |
-
-If Serial Monitor shows nothing, set `USB CDC On Boot` to `Enabled` and upload again.
-
----
-
-### 6.4 Upload firmware
-
-1. Open the `.ino` in Arduino IDE.
-2. Confirm Board and Port.
-3. Click **Upload**.
-4. On success, Output often shows:
-
-```text
-Writing at ... 100%
-Hash of data verified.
-Hard resetting via RTS pin...
-```
-
-If upload stalls at `Connecting...`:
-
-```text
-Hold BOOT -> click Upload -> release BOOT when Writing starts
-```
-
----
-
-### 6.5 Serial check
-
-Open Serial Monitor at:
-
-```text
-115200
-```
-
-Press `RST` on the board. Expected log:
-
-```text
-Power on. Default mode: demo
-Common anode BLE enhanced version.
-BLE device name: CursorLight
-BLE advertising started.
-Supported modes:
-demo / thinking / ai / busy / success / error / alarm / traffic / off / red / yellow / green
-```
-
----
-
-## 7. BLE Control Script
-
-Host control via Python:
-
-```text
-cursor_light_ble_enhanced.py
-```
-
-### 7.1 Install dependencies
-
-macOS:
-
-```bash
-python3 -m pip install bleak
-```
-
-Windows:
-
-```powershell
-py -3 -m pip install bleak
-```
-
-If macOS reports `Bluetooth device is turned off` while Bluetooth is on:
-
-```text
-Settings -> Privacy & Security -> Bluetooth
-```
-
-Grant access to Terminal, iTerm, Cursor, or your shell app.
-
----
-
-### 7.2 Manual test
-
-macOS:
-
-```bash
-python3 cursor_light_ble_enhanced.py demo
-python3 cursor_light_ble_enhanced.py thinking
-python3 cursor_light_ble_enhanced.py ai
-python3 cursor_light_ble_enhanced.py busy
-python3 cursor_light_ble_enhanced.py success
-python3 cursor_light_ble_enhanced.py error
-python3 cursor_light_ble_enhanced.py alarm
-python3 cursor_light_ble_enhanced.py traffic
-python3 cursor_light_ble_enhanced.py off
-```
-
-Windows:
-
-```powershell
-py -3 cursor_light_ble_enhanced.py demo
-py -3 cursor_light_ble_enhanced.py thinking
-py -3 cursor_light_ble_enhanced.py ai
-py -3 cursor_light_ble_enhanced.py busy
-py -3 cursor_light_ble_enhanced.py success
-py -3 cursor_light_ble_enhanced.py error
-py -3 cursor_light_ble_enhanced.py alarm
-py -3 cursor_light_ble_enhanced.py traffic
-py -3 cursor_light_ble_enhanced.py off
-```
-
----
-
-## 8. Firmware Modes
-
-| mode | Effect | Typical use |
-|---|---|---|
-| `demo` | Boot demo; cycles effects | Demo, idle display |
-| `thinking` | Chasing: L1 green -> L2 yellow -> L3 red | AI analysis, planning |
-| `ai` | Soft slow chase | AI generation, long tasks |
-| `busy` | Yellow slow blink | Build, test, install deps |
-| `success` | Green solid | Task succeeded |
-| `error` | Red fast blink | Failure or error |
-| `alarm` | Red/yellow alternate with short fade | Critical block |
-| `traffic` | Red flash to green, green flash to yellow, loop | Display / auto transition |
-| `off` | All off | Turn off |
-| `red` | Red solid | Single-lamp test |
-| `yellow` | Yellow solid | Waiting for user / test |
-| `green` | Green solid | Idle / test |
-
----
-
-## 9. Auto Timeout Rules
-
-Firmware auto-timeout prevents lamps staying on too long.
-
-| Current mode | Behavior |
-|---|---|
-| `demo` / `thinking` / `ai` / `busy` / `success` / `error` / `alarm` / `red` / `yellow` / `green` | Max 5 minutes, then `traffic` |
-| `traffic` | Max 10 minutes, then `off` |
-| `off` | No auto change |
-
----
-
-## 10. Cursor Hooks Integration
-
-CursorLight can hook into Cursor Agent via `.cursor/hooks` in your user directory.
-
-Recommended install path:
-
-| Platform | Path |
-|---|---|
-| macOS | `~/.cursor/hooks/cursor-light/` |
-| Windows | `%USERPROFILE%\.cursor\hooks\cursor-light\` |
-
-Typical layout:
-
-```text
-cursor-light/
-├─ install-cursor-light.sh
-├─ hooks.json.snippet
-├─ agent-light.sh
-├─ ble_gate.py
-├─ cursor_light_ble_enhanced.py
-├─ hook-*.sh
-└─ README.md
-```
-
-Roles:
-
-- `cursor_light_ble_enhanced.py`: writes mode to ESP32-C3 BLE GATT characteristic.
-- `ble_gate.py`: debounce and dedupe; avoids flicker when multiple hooks fire.
-- `agent-light.sh`: maps Agent state to modes.
-- `hook-*.sh`: Cursor Hook event entry points.
-- `hooks.json.snippet`: Cursor Hooks config fragment.
-
----
-
-## 11. macOS: Install Cursor Hooks
-
-```bash
-mkdir -p ~/.cursor/hooks/cursor-light
-cd ~/.cursor/hooks/cursor-light
-unzip ~/Downloads/cursor-light-bundle.zip
-chmod +x *.sh
-```
-
-Dependencies:
-
-```bash
-python3 -m pip install --user bleak
-```
-
-Configure hooks:
-
-```bash
-mkdir -p ~/.cursor
-cp hooks.json.snippet ~/.cursor/hooks.json
-```
-
-If `~/.cursor/hooks.json` already exists, merge manually—do not overwrite blindly.
-
-Self-test:
-
-```bash
-cd ~/.cursor/hooks/cursor-light
-python3 cursor_light_ble_enhanced.py green
-python3 cursor_light_ble_enhanced.py thinking
-python3 cursor_light_ble_enhanced.py busy
-python3 cursor_light_ble_enhanced.py alarm
-python3 cursor_light_ble_enhanced.py success
-```
-
----
-
-## 12. Windows: Install Cursor Hooks
-
-If the bundle only ships `.sh` hook entry points, use Git Bash on Windows, or a future `.ps1` release.
-
-PowerShell example:
-
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.cursor\hooks\cursor-light"
-Expand-Archive "$env:USERPROFILE\Downloads\cursor-light-bundle.zip" "$env:USERPROFILE\.cursor\hooks\cursor-light" -Force
-Set-Location "$env:USERPROFILE\.cursor\hooks\cursor-light"
-```
-
-Dependencies:
-
-```powershell
-py --version
-py -m pip install --user bleak
-```
-
-Configure hooks:
-
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.cursor"
-Copy-Item ".\hooks.json.snippet" "$env:USERPROFILE\.cursor\hooks.json"
-```
-
-If `hooks.json` already exists, merge manually.
-
-Self-test:
-
-```powershell
-py .\cursor_light_ble_enhanced.py green
-py .\cursor_light_ble_enhanced.py thinking
-py .\cursor_light_ble_enhanced.py busy
-py .\cursor_light_ble_enhanced.py alarm
-py .\cursor_light_ble_enhanced.py success
-```
-
----
-
-## 13. Recommended State Mapping
-
-| Cursor / dev scenario | Suggested mode |
-|---|---|
-| Agent analyzing requirements | `thinking` |
-| Agent generating or editing code | `ai` |
-| Terminal / build / test | `busy` |
-| Command OK / build pass / tests pass | `success` |
-| Ordinary failure / error | `error` |
-| Severe block / needs immediate attention | `alarm` |
-| Waiting for user confirmation | `yellow` |
-| Turn off lamp | `off` |
-
-Common flows:
-
-```text
-Normal task: thinking -> busy -> success / error
-Waiting for user: thinking -> yellow
-Critical: busy -> alarm
-```
-
----
-
-## 14. Logs and Debugging
-
-macOS:
-
-```bash
-tail -f ~/.cursor/hooks/cursor-light/ble.log
-```
-
-Windows PowerShell:
-
-```powershell
-Get-Content "$env:USERPROFILE\.cursor\hooks\cursor-light\ble.log" -Wait
-```
-
-Common issues:
-
-| Symptom | Check first |
-|---|---|
-| Device not found | ESP32-C3 powered? BLE name `CursorLight`? Range? System Bluetooth on? |
-| Write failed | GATT UUIDs match firmware? |
-| Effects jumping | `ble_gate.py` present? Duplicate hook registration? |
-| Cursor not triggering | `hooks.json` loaded? Paths correct? Restart Cursor? |
-| Stuck on busy / thinking | State not closed; check `ble_gate.py` and `state.json` |
-| Wrong colors | IO2=L1 green, IO3=L2 yellow, IO4=L3 red |
-
----
-
-## 15. FAQ
-
-### Arduino IDE: cannot find ESP32C3 Dev Module
-
-Confirm installed:
-
-```text
-esp32 by Espressif Systems
-```
-
-Restart Arduino IDE, then:
-
-```text
-Tools -> Board -> esp32
-```
-
-Select `ESP32C3 Dev Module`.
-
-### No serial port
-
-Check:
-
-- USB cable supports data.
-- Try another USB port.
-- On Windows, Device Manager shows a COM port.
-
-### Upload fails
-
-Try:
-
-```text
-Hold BOOT -> click Upload -> release BOOT when Writing starts
-```
-
-Close Serial Monitor so the port is free.
-
-### No serial output
-
-Confirm:
-
-```text
-USB CDC On Boot = Enabled
-```
-
-Re-upload and open Serial Monitor at 115200 baud.
-
-### Cannot find BLE device CursorLight
-
-Check:
-
-- ESP32-C3 powered.
-- Firmware running.
-- BLE name `CursorLight`.
-- Host Bluetooth on.
-- macOS: Bluetooth permission for Terminal / Cursor.
-
-### macOS: Bluetooth device is turned off
-
-Bluetooth may be on but the terminal lacks permission:
-
-```text
-Settings -> Privacy & Security -> Bluetooth
-```
-
-Allow your terminal app, then restart the terminal.
-
-### python command not found
-
-macOS typically:
-
-```bash
-python3
-```
-
-Windows:
-
-```powershell
-py -3
-```
-
----
-
-## 16. Uninstall
-
-macOS:
-
-```bash
-rm -rf ~/.cursor/hooks/cursor-light
-nano ~/.cursor/hooks.json
-```
-
-Windows PowerShell:
-
-```powershell
-Remove-Item -Recurse -Force "$env:USERPROFILE\.cursor\hooks\cursor-light"
-notepad "$env:USERPROFILE\.cursor\hooks.json"
-```
-
-Remove cursor-light entries from `hooks.json`, then restart Cursor.
-
----
-
-## 17. References
-
-- Arduino IDE download: `https://www.arduino.cc/en/software`
-- Arduino IDE install guide: `https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE`
-- Arduino-ESP32 install docs: `https://docs.espressif.com/projects/arduino-esp32/en/latest/installing.html`
